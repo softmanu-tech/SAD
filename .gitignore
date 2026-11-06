@@ -1,6 +1,13 @@
 # Codittle IDE (local per-machine MCP token)
 .mcp.json
 
+# Build output / dependencies
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
 # Confidential salary advance records and backups - NEVER commit
 data/
 *.backup.json
