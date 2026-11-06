@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: "Salary Advance Manager",
   description: "Local salary advance management",
   robots: { index: false, follow: false },
+  icons: { icon: "/sensys-logo.ico" },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };

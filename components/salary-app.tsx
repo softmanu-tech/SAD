@@ -143,9 +143,13 @@ export function SalaryApp() {
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
       <header className="mb-5 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-sm text-muted-foreground">{db.settings.companyName}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">Salary Advance Manager</h1>
+        <div className="flex items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element -- local .ico asset, no optimisation needed */}
+          <img src="/sensys-logo.ico" alt="" width={64} height={51} className="h-12 w-auto" />
+          <div>
+            <p className="text-sm text-muted-foreground">{db.settings.companyName}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">Salary Advance Manager</h1>
+          </div>
         </div>
         <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
           Payroll month
