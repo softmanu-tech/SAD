@@ -3,8 +3,11 @@ import { neon } from "@neondatabase/serverless";
 /** Runs one parameterised SQL statement and returns its rows. */
 export type Query = (text: string, params?: unknown[]) => Promise<Record<string, unknown>[]>;
 
+/** Connection string: DATABASE_URL, or POSTGRES_URL as set by the Vercel Neon integration. */
+const dbUrl = () => process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+
 /** Online mode: records live in Neon Postgres and everyone must log in. Otherwise the local data/ file is used. */
-export const hosted = () => !!process.env.DATABASE_URL;
+export const hosted = () => !!dbUrl();
 
 let q: Query | null = null;
 let ready: Promise<void> | null = null;
@@ -43,7 +46,7 @@ const SCHEMA = [
 /** The database, with its tables created on first use. */
 export async function db(): Promise<Query> {
   if (!q) {
-    const url = process.env.DATABASE_URL;
+    const url = dbUrl();
     if (!url) throw new Error("DATABASE_URL is not set");
     const sql = neon(url);
     q = (text, params) => sql.query(text, params ?? []) as Promise<Record<string, unknown>[]>;
