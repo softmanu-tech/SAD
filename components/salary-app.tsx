@@ -8,9 +8,12 @@ import {
   FileText,
   FileUp,
   HandCoins,
+  KeyRound,
+  LogOut,
   Pencil,
   Plus,
   Printer,
+  Trash2,
   TriangleAlert,
   Users,
   Wallet,
@@ -45,7 +48,7 @@ import type { AdvanceRequest, AppState, Check, Db, Employee, Purpose } from "@/l
 import { PURPOSES } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type Tab = "dashboard" | "requests" | "employees";
+type Tab = "dashboard" | "requests" | "employees" | "users";
 type Upload = ParseResult & { token: string; fileName: string };
 type Dlg =
   | { kind: "employee"; emp?: Employee }
@@ -72,16 +75,17 @@ const selectCls =
 const textareaCls =
   "min-h-16 w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
-async function api(body: Record<string, unknown>): Promise<AppState> {
-  const res = await fetch("/api/state", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
+/** Thrown when the online session has ended, so the app can show the sign-in screen. */
+class SignedOut extends Error {}
+
+async function call<T>(url: string, body?: Record<string, unknown>): Promise<T> {
+  const res = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) throw new SignedOut(data.error || "Please sign in");
   if (!res.ok) throw new Error(data.error || "Request failed");
-  return data as AppState;
+  return data as T;
 }
+const api = (body: Record<string, unknown>) => call<AppState>("/api/state", body);
 
 export function SalaryApp() {
   const [state, setState] = useState<AppState | null>(null);
@@ -90,22 +94,28 @@ export function SalaryApp() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [monthPick, setMonthPick] = useState<string | null>(null);
   const [dlg, setDlg] = useState<Dlg>(null);
+  const [signedOut, setSignedOut] = useState(false);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/state", { cache: "no-store" })
-      .then(async (r) => {
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.error || "Could not load data");
-        return d as AppState;
+    call<AppState>("/api/state")
+      .then((d) => {
+        if (!alive) return;
+        setState(d);
+        setSignedOut(false);
       })
-      .then((d) => alive && setState(d))
-      .catch((e: Error) => alive && setLoadError(e.message));
+      .catch((e: Error) => {
+        if (!alive) return;
+        if (e instanceof SignedOut) setSignedOut(true);
+        else setLoadError(e.message);
+      });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reload]);
 
+  if (signedOut) return <SignIn onDone={() => setReload((n) => n + 1)} />;
   if (!state) {
     return <div className="p-8 text-sm text-muted-foreground">{loadError || "Loading…"}</div>;
   }
@@ -117,8 +127,15 @@ export function SalaryApp() {
       setState(await api(body));
       return null;
     } catch (e) {
+      if (e instanceof SignedOut) setSignedOut(true);
       return e instanceof Error ? e.message : String(e);
     }
+  };
+  const signOut = async () => {
+    await call("/api/auth", { action: "logout" }).catch(() => undefined);
+    setState(null);
+    setDlg(null);
+    setSignedOut(true);
   };
   const ctx: Ctx = {
     state,
@@ -140,6 +157,7 @@ export function SalaryApp() {
     { id: "dashboard", label: "Dashboard" },
     { id: "requests", label: `Requests${pendingCount ? ` (${pendingCount})` : ""}` },
     { id: "employees", label: "Employees" },
+    ...(state.hosted ? [{ id: "users" as const, label: "Users" }] : []),
   ];
 
   return (
@@ -150,6 +168,17 @@ export function SalaryApp() {
           <img src="/sensys-logo.ico" alt="" width={64} height={51} className="h-12 w-auto" />
           <h1 className="text-2xl font-semibold tracking-tight">Salary Advance Manager</h1>
         </div>
+        <div className="flex flex-wrap items-end gap-3">
+        {state.user && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">
+              Signed in as <span className="font-medium text-foreground">{state.user.name}</span>
+            </span>
+            <Button variant="outline" size="sm" onClick={signOut}>
+              <LogOut /> Sign out
+            </Button>
+          </div>
+        )}
         <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
           Payroll month
           <Input
@@ -159,6 +188,7 @@ export function SalaryApp() {
             onChange={(e) => e.target.value && setMonthPick(e.target.value)}
           />
         </label>
+        </div>
       </header>
 
       <nav className="mb-6 flex gap-1 overflow-x-auto overflow-y-hidden border-b">
@@ -188,6 +218,7 @@ export function SalaryApp() {
       {tab === "dashboard" && <Dashboard ctx={ctx} />}
       {tab === "requests" && <Requests ctx={ctx} />}
       {tab === "employees" && <Employees ctx={ctx} />}
+      {tab === "users" && state.user && <UsersTab me={state.user} setSignedOut={setSignedOut} />}
 
       {dlg?.kind === "employee" && <EmployeeDialog key={dlg.emp?.id ?? "new"} ctx={ctx} emp={dlg.emp} onClose={close} />}
       {dlg?.kind === "new-request" && <NewRequestDialog ctx={ctx} employeeId={dlg.employeeId} onClose={close} />}
@@ -713,7 +744,9 @@ function AdvanceDialog({ ctx, id, onClose }: { ctx: Ctx; id: string; onClose: ()
           </DialogTitle>
           <DialogDescription>
             Applied {dateLabel(r.requestedOn)} for {ctx.money(r.amount)}
+            {r.createdBy && ` · entered by ${r.createdBy}`}
             {r.decidedOn && ` · ${r.status} ${dateLabel(r.decidedOn)}`}
+            {r.decidedBy && ` by ${r.decidedBy}`}
           </DialogDescription>
         </DialogHeader>
         {r.decisionNote && <p className="rounded-lg bg-muted/50 p-3 text-sm">Note: {r.decisionNote}</p>}
@@ -777,6 +810,7 @@ function AdvanceDialog({ ctx, id, onClose }: { ctx: Ctx; id: string; onClose: ()
                     <td>
                       {p.kind === "deduction" ? `Salary deduction · ${monthLabel(p.month ?? "")}` : "Early repayment"}
                       {p.note && <span className="text-muted-foreground"> · {p.note}</span>}
+                      {p.recordedBy && <span className="text-muted-foreground"> · by {p.recordedBy}</span>}
                     </td>
                     <Num>{ctx.money(p.amount)}</Num>
                   </tr>
@@ -943,6 +977,156 @@ function EmployeeDialog({ ctx, emp, onClose }: { ctx: Ctx; emp?: Employee; onClo
   );
 }
 
+// ---------------------------------------------------------------- sign in & users (online version)
+
+function SignIn({ onDone }: { onDone: () => void }) {
+  const [f, setF] = useState({ email: "", password: "" });
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    try {
+      await call("/api/auth", { action: "login", ...f });
+      onDone();
+    } catch (x) {
+      setErr(x instanceof Error ? x.message : String(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex min-h-dvh items-center justify-center px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="flex flex-col items-center gap-2 text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element -- local .ico asset */}
+          <img src="/sensys-logo.ico" alt="" width={64} height={51} className="h-14 w-auto" />
+          <CardTitle className="text-xl">Salary Advance Manager</CardTitle>
+          <CardDescription>Sign in to continue</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={submit} className="flex flex-col gap-4">
+            <Field label="Email">
+              <Input type="email" autoComplete="username" required value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+            </Field>
+            <Field label="Password">
+              <Input type="password" autoComplete="current-password" required value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
+            </Field>
+            <ErrorText msg={err} />
+            <Button type="submit" size="lg" disabled={busy}>
+              {busy ? "Signing in…" : "Sign in"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+interface UserRow {
+  id: string;
+  name: string;
+  email: string;
+  created: string;
+}
+
+function UsersTab({ me, setSignedOut }: { me: { id: string }; setSignedOut: (v: boolean) => void }) {
+  const onSignedOut = () => setSignedOut(true);
+  const [users, setUsers] = useState<UserRow[] | null>(null);
+  const [f, setF] = useState({ name: "", email: "", password: "" });
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    call<{ users: UserRow[] }>("/api/users")
+      .then((d) => setUsers(d.users))
+      .catch((e: Error) => (e instanceof SignedOut ? setSignedOut(true) : setMsg({ ok: false, text: e.message })));
+  }, [setSignedOut]);
+
+  const act = async (body: Record<string, unknown>, ok: string) => {
+    try {
+      const d = await call<{ users: UserRow[] }>("/api/users", body);
+      setUsers(d.users);
+      setMsg({ ok: true, text: ok });
+      return true;
+    } catch (e) {
+      if (e instanceof SignedOut) onSignedOut();
+      setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      return false;
+    }
+  };
+  const add = async () => {
+    if (await act({ action: "add", ...f }, `${f.name} can now sign in.`)) setF({ name: "", email: "", password: "" });
+  };
+  const reset = async (u: UserRow) => {
+    const pw = prompt(`New password for ${u.name} (at least 10 characters). They will be signed out everywhere.`);
+    if (pw) await act({ action: "password", id: u.id, password: pw }, `Password changed for ${u.name}.`);
+  };
+  const remove = async (u: UserRow) => {
+    if (confirm(`Remove ${u.name} (${u.email})? They will no longer be able to sign in.`)) await act({ action: "remove", id: u.id }, `${u.name} removed.`);
+  };
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
+      <Card>
+        <CardHeader>
+          <CardTitle>People who can sign in</CardTitle>
+          <CardDescription>Everyone listed here can see and manage all salary advance records.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table head={["Name", "Email", "Added", ""]} empty={users ? "No users." : "Loading…"}>
+            {(users ?? []).map((u) => (
+              <tr key={u.id}>
+                <td className="font-medium">
+                  {u.name}
+                  {u.id === me.id && <span className="text-muted-foreground"> (you)</span>}
+                </td>
+                <td>{u.email}</td>
+                <td className="whitespace-nowrap">{dateLabel(u.created)}</td>
+                <td className="text-right whitespace-nowrap">
+                  <Button variant="ghost" size="icon-sm" title="Set a new password" onClick={() => reset(u)}>
+                    <KeyRound />
+                  </Button>
+                  {u.id !== me.id && (
+                    <Button variant="ghost" size="icon-sm" title="Remove" onClick={() => remove(u)}>
+                      <Trash2 />
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Add a person</CardTitle>
+          <CardDescription>Give them the password in person; they can change it later from this page.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <Field label="Name">
+            <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+          </Field>
+          <Field label="Email">
+            <Input type="email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+          </Field>
+          <Field label="Starting password (at least 10 characters)">
+            <Input type="password" autoComplete="new-password" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} />
+          </Field>
+          {msg && <p className={cn("rounded-lg px-3 py-2 text-sm", msg.ok ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive")}>{msg.text}</p>}
+          <div>
+            <Button onClick={add}>
+              <Plus /> Add person
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- uploaded application forms
 
 const OriginalLink = ({ id, icon }: { id: string; icon?: boolean }) => (
@@ -969,7 +1153,7 @@ function UploadButton({ ctx, size }: { ctx: Ctx; size?: "sm" }) {
       const body = new FormData();
       body.append("file", file);
       const res = await fetch("/api/upload", { method: "POST", body });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ error: res.status === 413 ? "The file is too large" : "Upload failed" }));
       if (!res.ok) throw new Error(data.error || "Upload failed");
       ctx.notify("");
       ctx.open({ kind: "from-form", upload: { ...(data as ParseResult & { token: string }), fileName: file.name } });

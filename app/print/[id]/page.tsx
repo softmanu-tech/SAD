@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Printer } from "lucide-react";
 import { LoanForm } from "@/components/loan-form";
@@ -11,12 +12,14 @@ export default function PrintPage() {
   const { id } = useParams<{ id: string }>();
   const [state, setState] = useState<AppState | null>(null);
   const [error, setError] = useState("");
+  const [signedOut, setSignedOut] = useState(false);
 
   useEffect(() => {
     let alive = true;
     fetch("/api/state", { cache: "no-store" })
       .then(async (r) => {
         const d = await r.json();
+        if (r.status === 401) setSignedOut(true);
         if (!r.ok) throw new Error(d.error || "Could not load data");
         return d as AppState;
       })
@@ -27,6 +30,17 @@ export default function PrintPage() {
     };
   }, []);
 
+  if (signedOut) {
+    return (
+      <p className="p-8 text-sm">
+        Your session has ended.{" "}
+        <Link className="text-primary underline" href="/">
+          Sign in
+        </Link>{" "}
+        and open the form again.
+      </p>
+    );
+  }
   if (!state) return <p className="p-8 text-sm">{error || "Loading…"}</p>;
   const r = state.db.requests.find((x) => x.id === id);
   if (!r) return <p className="p-8 text-sm">Request not found.</p>;

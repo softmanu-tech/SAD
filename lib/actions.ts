@@ -3,13 +3,9 @@ import type { AdvanceRequest, Db, Employee, Purpose } from "./types";
 import { PURPOSES } from "./types";
 import { balance, buildSchedule, deductedIn, dueFor, fmtMoney, monthLabel, policyChecks, r2, ymd } from "./calc";
 
-export class HttpError extends Error {
-  code: number;
-  constructor(code: number, message: string) {
-    super(message);
-    this.code = code;
-  }
-}
+import { HttpError } from "./errors";
+
+export { HttpError };
 
 type Body = Record<string, unknown>;
 const need = (cond: unknown, msg: string) => {
@@ -27,8 +23,11 @@ function findRequest(db: Db, id: unknown): AdvanceRequest {
   return r;
 }
 
-/** Applies one change to `db`. Returns the id of a request it created, if any. */
-export function apply(db: Db, b: Body): string | void {
+/**
+ * Applies one change to `db`. Returns the id of a request it created, if any.
+ * `by` is the name of the signed-in person (online), recorded on requests, decisions and payments.
+ */
+export function apply(db: Db, b: Body, by?: string): string | void {
   const today = ymd();
   switch (b.type) {
     case "saveSettings": {
@@ -85,6 +84,7 @@ export function apply(db: Db, b: Body): string | void {
         status: "pending",
         schedule: [],
         payments: [],
+        createdBy: by,
       };
       need(db.employees.some((e) => e.id === r.employeeId), "Choose an employee");
       need(r.amount > 0, "Amount must be greater than 0");
@@ -102,10 +102,10 @@ export function apply(db: Db, b: Body): string | void {
       const staffNo = str(x.staffNo);
       need(staffNo, "Staff number is required");
       const byStaffNo = (e: Employee) => e.staffNo.toLowerCase() === staffNo.toLowerCase();
-      apply(db, { type: "saveEmployee", employee: { ...x, id: db.employees.find(byStaffNo)?.id ?? "" } });
+      apply(db, { type: "saveEmployee", employee: { ...x, id: db.employees.find(byStaffNo)?.id ?? "" } }, by);
       const emp = db.employees.find(byStaffNo);
       need(emp, "Employee could not be saved");
-      const id = apply(db, { ...((b.request ?? {}) as Body), type: "createRequest", employeeId: emp!.id });
+      const id = apply(db, { ...((b.request ?? {}) as Body), type: "createRequest", employeeId: emp!.id }, by);
       return id;
     }
 
@@ -122,6 +122,7 @@ export function apply(db: Db, b: Body): string | void {
         status: "approved",
         approvedAmount: amount,
         decidedOn: today,
+        decidedBy: by,
         decisionNote: str(b.note) || undefined,
         startMonth: start,
         schedule: buildSchedule(amount, r.months, start),
@@ -134,7 +135,7 @@ export function apply(db: Db, b: Body): string | void {
       need(r.status === "pending", "Only pending requests can be rejected");
       const note = str(b.note);
       need(note, "Add a note explaining the rejection");
-      Object.assign(r, { status: "rejected", decidedOn: today, decisionNote: note });
+      Object.assign(r, { status: "rejected", decidedOn: today, decidedBy: by, decisionNote: note });
       return;
     }
 
@@ -146,7 +147,7 @@ export function apply(db: Db, b: Body): string | void {
       need(!deductedIn(r, month), `A deduction is already recorded for ${monthLabel(month)}`);
       const due = dueFor(r, month);
       need(due > 0, `Nothing is due for ${monthLabel(month)}`);
-      r.payments.push({ id: newId(), date: today, amount: due, kind: "deduction", month });
+      r.payments.push({ id: newId(), date: today, amount: due, kind: "deduction", month, recordedBy: by });
       return;
     }
 
@@ -163,6 +164,7 @@ export function apply(db: Db, b: Body): string | void {
         date: isDate(date) ? date : today,
         amount,
         kind: "early",
+        recordedBy: by,
         note: str(b.note) || undefined,
       });
       return;

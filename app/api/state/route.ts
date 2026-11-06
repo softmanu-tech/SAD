@@ -1,26 +1,20 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { apply, HttpError } from "@/lib/actions";
+import { apply } from "@/lib/actions";
 import { ymd } from "@/lib/calc";
-import { attachUpload, listBackups, load, readBackup, restore, save } from "@/lib/store";
-import type { AppState } from "@/lib/types";
-import { guard } from "../guard";
+import { hosted } from "@/lib/db";
+import { attachUpload, listBackups, load, mutate } from "@/lib/store";
+import type { AppState, SessionUser } from "@/lib/types";
+import { fail, guard, noStore } from "../guard";
 
-const noStore = { "Cache-Control": "no-store" };
-
-function view(): AppState {
-  return { db: load(), today: ymd(), backups: listBackups() };
-}
-
-function fail(e: unknown) {
-  const code = e instanceof HttpError ? e.code : 500;
-  const error = e instanceof Error ? e.message : String(e);
-  return NextResponse.json({ error }, { status: code, headers: noStore });
+async function view(user: SessionUser | null): Promise<AppState> {
+  const [db, backups] = await Promise.all([load(), listBackups()]);
+  return { db, today: ymd(), backups, hosted: hosted(), user };
 }
 
 export async function GET(req: NextRequest) {
   try {
-    guard(req, false);
-    return NextResponse.json(view(), { headers: noStore });
+    const user = await guard(req, false);
+    return NextResponse.json(await view(user), { headers: noStore });
   } catch (e) {
     return fail(e);
   }
@@ -28,26 +22,17 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    guard(req, true);
+    const user = await guard(req, true);
     const body = (await req.json()) as Record<string, unknown>;
-    if (body.type === "restore") {
-      const incoming = typeof body.backup === "string" ? readBackup(body.backup) : body.data;
-      try {
-        restore(incoming);
-      } catch (e) {
-        throw new HttpError(400, e instanceof Error ? e.message : String(e));
-      }
-    } else {
-      const db = load();
-      const createdId = apply(db, body);
+    await mutate(async (db) => {
+      const createdId = apply(db, body, user?.name);
       const token = typeof body.uploadToken === "string" ? body.uploadToken : "";
       if (body.type === "createFromForm" && token && createdId) {
         const r = db.requests.find((x) => x.id === createdId);
-        if (r) r.sourceFile = attachUpload(token, createdId);
+        if (r) r.sourceFile = await attachUpload(token, createdId);
       }
-      save(db);
-    }
-    return NextResponse.json(view(), { headers: noStore });
+    });
+    return NextResponse.json(await view(user), { headers: noStore });
   } catch (e) {
     return fail(e);
   }

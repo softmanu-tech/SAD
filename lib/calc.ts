@@ -4,7 +4,13 @@ import type { AdvanceRequest, Check, Db, Employee, Instalment } from "./types";
 export const r2 = (x: number) => Math.round(x * 100) / 100;
 
 const pad = (n: number) => String(n).padStart(2, "0");
-export function ymd(d = new Date()) {
+/** Payroll dates follow East Africa Time, also when the server runs on UTC. */
+export const TIME_ZONE = "Africa/Nairobi";
+const todayFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** YYYY-MM-DD: today in East Africa Time, or the calendar date of `d`. */
+export function ymd(d?: Date) {
+  if (!d) return todayFmt.format(new Date());
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 export const thisMonth = () => ymd().slice(0, 7);

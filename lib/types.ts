@@ -33,6 +33,8 @@ export interface Payment {
   /** Payroll month (YYYY-MM) for salary deductions */
   month?: string;
   note?: string;
+  /** Who recorded it (online version) */
+  recordedBy?: string;
 }
 
 export interface Instalment {
@@ -53,7 +55,11 @@ export interface AdvanceRequest {
   status: "pending" | "approved" | "rejected";
   approvedAmount?: number;
   decidedOn?: string;
+  /** Who approved/rejected it (online version) */
+  decidedBy?: string;
   decisionNote?: string;
+  /** Who entered it (online version) */
+  createdBy?: string;
   startMonth?: string;
   schedule: Instalment[];
   payments: Payment[];
@@ -76,8 +82,17 @@ export interface Check {
   blocking: boolean;
 }
 
+export interface SessionUser {
+  id: string;
+  name: string;
+  email: string;
+}
+
 export interface AppState {
   db: Db;
   today: string;
   backups: string[];
+  /** true online (login required), false on the laptop */
+  hosted: boolean;
+  user: SessionUser | null;
 }

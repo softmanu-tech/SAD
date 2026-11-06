@@ -8,6 +8,10 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 
+# Secrets (database URL, session secret, admin password)
+.env*
+.vercel
+
 # Confidential salary advance records and backups - NEVER commit
 data/
 *.backup.json
