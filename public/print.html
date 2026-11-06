@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Salary Advance Application</title>
+<style>
+  @page { size: A4; margin: 15mm; }
+  body { font: 12pt/1.4 "Times New Roman", serif; color: #000; background: #fff; max-width: 180mm; margin: 0 auto; padding: 10mm 0; }
+  h1 { text-align: center; font-size: 16pt; margin: 0; text-transform: uppercase; }
+  h2 { text-align: center; font-size: 13pt; margin: 4px 0 16px; text-decoration: underline; text-transform: uppercase; }
+  h3 { font-size: 11pt; margin: 16px 0 6px; text-transform: uppercase; border-bottom: 1px solid #000; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { border: 1px solid #000; padding: 5px 7px; vertical-align: top; }
+  td.k { width: 38%; font-weight: bold; }
+  .months td { text-align: center; width: 8.33%; font-size: 10pt; }
+  .box { display: inline-block; width: 13px; height: 13px; border: 1px solid #000; text-align: center; line-height: 12px; font-size: 11pt; }
+  .sig td { height: 46px; }
+  .bar { text-align: center; margin: 12px 0; } .bar button { font-size: 12pt; padding: 6px 18px; }
+  @media print { .bar { display: none; } body { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="bar"><button onclick="print()">Print</button></div>
+<div id="f">Loading…</div>
+<script>
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const money = n => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+fetch('/api/state').then(r => r.json()).then(S => {
+  const r = S.requests.find(x => x.id === new URLSearchParams(location.search).get('id'));
+  if (!r) { document.getElementById('f').textContent = 'Request not found'; return; }
+  const e = S.employees.find(x => x.id === r.employeeId) || {};
+  const amount = r.status === 'approved' ? r.approvedAmount : r.amount;
+  // Deduction months: approved schedule, or (pending) the months following the request
+  let sched = r.schedule && r.schedule.length ? r.schedule : Array.from({ length: r.months }, (_, i) => {
+    const d = new Date(r.requestedOn + 'T00:00'); d.setDate(1); d.setMonth(d.getMonth() + 1 + i);
+    return { month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, due: amount / r.months };
+  });
+  const ticked = new Map(sched.map(s => [Number(s.month.slice(5)), s]));
+  const years = [...new Set(sched.map(s => s.month.slice(0, 4)))].join(' / ');
+  const tick = b => `<span class="box">${b ? '✓' : ''}</span>`;
+  document.getElementById('f').innerHTML = `
+  <h1>${esc(S.settings.companyName)}</h1>
+  <h2>Salary Advance Application Form</h2>
+  <h3>Section A: Employee details</h3>
+  <table>
+    <tr><td class="k">Staff number</td><td>${esc(e.staffNo)}</td></tr>
+    <tr><td class="k">Full name</td><td>${esc(e.name)}</td></tr>
+    <tr><td class="k">Position</td><td>${esc(e.position)}</td></tr>
+    <tr><td class="k">Phone number</td><td>${esc(e.phone)}</td></tr>
+    <tr><td class="k">Date of employment</td><td>${esc(e.employedOn)}</td></tr>
+    <tr><td class="k">Monthly gross salary</td><td>${money(e.gross)}</td></tr>
+  </table>
+  <h3>Section B: Advance requested</h3>
+  <table>
+    <tr><td class="k">Amount requested</td><td>${money(r.amount)}</td></tr>
+    <tr><td class="k">Repayment period</td><td>${tick(r.months === 1)} 1 month &nbsp; ${tick(r.months === 2)} 2 months &nbsp; ${tick(r.months === 3)} 3 months</td></tr>
+    <tr><td class="k">Purpose of advance</td><td>${esc(r.purpose) || '&nbsp;'}</td></tr>
+    <tr><td class="k">Other outstanding loans</td><td>${esc(r.otherLoans) || 'None'}</td></tr>
+    <tr><td class="k">Date of application</td><td>${esc(r.requestedOn)}</td></tr>
+  </table>
+  <h3>Section C: Deduction months (${esc(years)})</h3>
+  <table class="months"><tr>${MONTHS.map(m => `<td>${m}</td>`).join('')}</tr>
+    <tr>${MONTHS.map((_, i) => `<td>${tick(ticked.has(i + 1))}</td>`).join('')}</tr>
+    <tr>${MONTHS.map((_, i) => `<td>${ticked.has(i + 1) ? money(ticked.get(i + 1).due) : ''}</td>`).join('')}</tr></table>
+  <p>I, the undersigned, request the above salary advance and authorise the company to deduct the repayments from my salary in the months ticked above. Should I leave employment before full repayment, I authorise the deduction of any outstanding balance from my final dues.</p>
+  <table class="sig"><tr><td class="k">Employee signature</td><td></td><td style="width:20%">Date:</td></tr></table>
+  <h3>Section D: For official use</h3>
+  <table>
+    <tr><td class="k">Amount approved</td><td>${r.status === 'approved' ? money(r.approvedAmount) : '&nbsp;'}</td></tr>
+    <tr><td class="k">Decision</td><td>${tick(r.status === 'approved')} Approved &nbsp; ${tick(r.status === 'rejected')} Rejected ${r.rejectReason ? '— ' + esc(r.rejectReason) : ''}</td></tr>
+  </table>
+  <table class="sig" style="margin-top:8px">
+    <tr><td class="k">Head of department</td><td></td><td style="width:20%">Date:</td></tr>
+    <tr><td class="k">Human resources</td><td></td><td>Date:</td></tr>
+    <tr><td class="k">Approved by (Management)</td><td></td><td>Date:</td></tr>
+  </table>`;
+});
+</script>
+</body>
+</html>

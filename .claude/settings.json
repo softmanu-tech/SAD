@@ -1,0 +1,57 @@
+{
+  "enabledMcpjsonServers": [
+    "codittle-ide"
+  ],
+  "permissions": {
+    "allow": [
+      "mcp__codittle-ide__editor_propose_edit",
+      "mcp__codittle-ide__editor_open_file",
+      "mcp__codittle-ide__editor_get_context",
+      "mcp__codittle-ide__canvas_add_node",
+      "mcp__codittle-ide__canvas_list_nodes",
+      "mcp__codittle-ide__workforce_status",
+      "mcp__codittle-ide__workforce_build",
+      "mcp__codittle-ide__workforce_stop",
+      "mcp__codittle-ide__quicknotes_list",
+      "mcp__codittle-ide__quicknotes_search",
+      "mcp__codittle-ide__quicknotes_read",
+      "mcp__codittle-ide__quicknotes_view_picture",
+      "mcp__codittle-ide__quicknotes_versions",
+      "mcp__codittle-ide__quicknotes_current",
+      "mcp__codittle-ide__quicknotes_pictures",
+      "mcp__codittle-ide__quicknotes_screenshot",
+      "mcp__codittle-ide__walkthrough_brief",
+      "mcp__codittle-ide__walkthrough_read_document",
+      "mcp__codittle-ide__walkthrough_check",
+      "mcp__codittle-ide__list_connections",
+      "mcp__codittle-ide__read_record",
+      "mcp__codittle-ide__grep_remote",
+      "mcp__codittle-ide__fetch_remote_file",
+      "mcp__codittle-ide__check_app_db",
+      "mcp__codittle-ide__fleet_status",
+      "mcp__codittle-ide__version_get",
+      "mcp__codittle-ide__run_command",
+      "mcp__codittle-ide__remote_socket_send",
+      "mcp__codittle-ide__deploy_routine"
+    ],
+    "deny": [
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "PowerShell"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \".claude/hooks/no-shell-writes.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

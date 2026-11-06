@@ -1,0 +1,7 @@
+# Codittle IDE (local per-machine MCP token)
+.mcp.json
+
+# Confidential salary advance records and backups - NEVER commit
+data/
+*.backup.json
+salary-advance-backup-*.json
