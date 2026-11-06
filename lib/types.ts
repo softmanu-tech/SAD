@@ -57,6 +57,8 @@ export interface AdvanceRequest {
   startMonth?: string;
   schedule: Instalment[];
   payments: Payment[];
+  /** File name in data/uploads of the uploaded application form, if any */
+  sourceFile?: string;
 }
 
 export interface Db {

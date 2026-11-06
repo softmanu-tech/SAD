@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AdvanceRequest, Db, Employee, Purpose } from "./types";
@@ -9,10 +10,13 @@ const DB_FILE = path.join(DATA_DIR, "salary-advance.json");
 /** Data file written by the original server.js app. Read-only here: never modified or deleted. */
 const LEGACY_FILE = path.join(DATA_DIR, "db.json");
 const BACKUP_DIR = path.join(DATA_DIR, "backups");
+/** Uploaded loan application PDFs: tmp-<token>.pdf until saved, then <requestId>.pdf. Never deleted. */
+const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const emptyDb = (): Db => ({
   version: 2,
-  settings: { companyName: "Company Name", currency: "", facilitySize: 0 },
+  settings: { companyName: "", currency: "KSH", facilitySize: 0 },
   employees: [],
   requests: [],
 });
@@ -71,6 +75,32 @@ export function restore(incoming: unknown) {
   writeAtomic(db);
 }
 
+// ---------- uploaded application forms ----------
+
+/** Keep an uploaded PDF until its request is saved; returns the token that links them. */
+export function saveTempUpload(pdf: Buffer): string {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  const token = crypto.randomUUID();
+  fs.writeFileSync(path.join(UPLOAD_DIR, `tmp-${token}.pdf`), pdf);
+  return token;
+}
+
+/** Attach an uploaded PDF to its saved request. */
+export function attachUpload(token: string, requestId: string): string {
+  if (!UUID.test(token) || !UUID.test(requestId)) throw new Error("Invalid upload reference");
+  const from = path.join(UPLOAD_DIR, `tmp-${token}.pdf`);
+  if (!fs.existsSync(from)) throw new Error("The uploaded form was not found; upload it again");
+  const name = `${requestId}.pdf`;
+  fs.renameSync(from, path.join(UPLOAD_DIR, name));
+  return name;
+}
+
+export function readUpload(requestId: string): Buffer | null {
+  if (!UUID.test(requestId)) return null;
+  const file = path.join(UPLOAD_DIR, `${requestId}.pdf`);
+  return fs.existsSync(file) ? fs.readFileSync(file) : null;
+}
+
 // ---------- validation & migration ----------
 type Loose = Record<string, unknown>;
 const s = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
@@ -85,6 +115,7 @@ export function normalize(x: unknown): Db {
   if (d.version === 2) {
     const db = d as unknown as Db;
     db.settings = { ...emptyDb().settings, ...(db.settings ?? {}) };
+    if (!db.settings.currency) db.settings.currency = "KSH";
     return db;
   }
   return migrateV1(d);
@@ -145,7 +176,7 @@ function migrateV1(d: Loose): Db {
     version: 2,
     settings: {
       companyName: s(settings.companyName) || "Company Name",
-      currency: s(settings.currency),
+      currency: s(settings.currency) || "KSH",
       facilitySize: n(settings.fundSize ?? settings.facilitySize),
     },
     employees,

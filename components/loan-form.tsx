@@ -39,7 +39,6 @@ export function LoanForm({ r, e, settings }: { r: AdvanceRequest; e?: Employee; 
       <header className="text-center">
         {/* eslint-disable-next-line @next/next/no-img-element -- local .ico asset, prints as-is */}
         <img src="/sensys-logo.ico" alt="" width={80} height={64} className="mx-auto mb-1 h-16 w-auto" />
-        <div className="text-lg font-bold uppercase">{settings.companyName}</div>
         <h1 className="mt-1 text-xl font-bold tracking-wider uppercase">Loan Application Form</h1>
         <div className="text-sm italic">Salary Advance</div>
       </header>

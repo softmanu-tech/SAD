@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { apply, HttpError } from "@/lib/actions";
 import { ymd } from "@/lib/calc";
-import { listBackups, load, readBackup, restore, save } from "@/lib/store";
+import { attachUpload, listBackups, load, readBackup, restore, save } from "@/lib/store";
 import type { AppState } from "@/lib/types";
 import { guard } from "../guard";
 
@@ -39,7 +39,12 @@ export async function POST(req: NextRequest) {
       }
     } else {
       const db = load();
-      apply(db, body);
+      const createdId = apply(db, body);
+      const token = typeof body.uploadToken === "string" ? body.uploadToken : "";
+      if (body.type === "createFromForm" && token && createdId) {
+        const r = db.requests.find((x) => x.id === createdId);
+        if (r) r.sourceFile = attachUpload(token, createdId);
+      }
       save(db);
     }
     return NextResponse.json(view(), { headers: noStore });

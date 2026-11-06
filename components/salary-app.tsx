@@ -5,15 +5,13 @@ import {
   CalendarClock,
   CircleCheck,
   CircleX,
-  Download,
+  FileText,
+  FileUp,
   HandCoins,
-  Landmark,
   Pencil,
   Plus,
   Printer,
-  RotateCcw,
   TriangleAlert,
-  Upload,
   Users,
   Wallet,
   X,
@@ -42,14 +40,17 @@ import {
   r2,
   requestStatus,
 } from "@/lib/calc";
-import type { AdvanceRequest, AppState, Check, Employee, Purpose } from "@/lib/types";
+import type { ParseResult } from "@/lib/parse-form";
+import type { AdvanceRequest, AppState, Check, Db, Employee, Purpose } from "@/lib/types";
 import { PURPOSES } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type Tab = "dashboard" | "requests" | "employees" | "settings";
+type Tab = "dashboard" | "requests" | "employees";
+type Upload = ParseResult & { token: string; fileName: string };
 type Dlg =
   | { kind: "employee"; emp?: Employee }
   | { kind: "new-request"; employeeId?: string }
+  | { kind: "from-form"; upload: Upload }
   | { kind: "review"; id: string }
   | { kind: "advance"; id: string }
   | null;
@@ -63,6 +64,7 @@ interface Ctx {
   run: Run;
   open: (d: Dlg) => void;
   deduct: (id: string) => void;
+  notify: (msg: string) => void;
 }
 
 const selectCls =
@@ -129,6 +131,7 @@ export function SalaryApp() {
       const err = await run({ type: "recordDeduction", id, month });
       setBanner(err ?? "");
     },
+    notify: setBanner,
   };
   const close = () => setDlg(null);
   const pendingCount = db.requests.filter((r) => r.status === "pending").length;
@@ -137,7 +140,6 @@ export function SalaryApp() {
     { id: "dashboard", label: "Dashboard" },
     { id: "requests", label: `Requests${pendingCount ? ` (${pendingCount})` : ""}` },
     { id: "employees", label: "Employees" },
-    { id: "settings", label: "Settings & backup" },
   ];
 
   return (
@@ -146,10 +148,7 @@ export function SalaryApp() {
         <div className="flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element -- local .ico asset, no optimisation needed */}
           <img src="/sensys-logo.ico" alt="" width={64} height={51} className="h-12 w-auto" />
-          <div>
-            <p className="text-sm text-muted-foreground">{db.settings.companyName}</p>
-            <h1 className="text-2xl font-semibold tracking-tight">Salary Advance Manager</h1>
-          </div>
+          <h1 className="text-2xl font-semibold tracking-tight">Salary Advance Manager</h1>
         </div>
         <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
           Payroll month
@@ -189,10 +188,10 @@ export function SalaryApp() {
       {tab === "dashboard" && <Dashboard ctx={ctx} />}
       {tab === "requests" && <Requests ctx={ctx} />}
       {tab === "employees" && <Employees ctx={ctx} />}
-      {tab === "settings" && <SettingsTab ctx={ctx} />}
 
       {dlg?.kind === "employee" && <EmployeeDialog key={dlg.emp?.id ?? "new"} ctx={ctx} emp={dlg.emp} onClose={close} />}
       {dlg?.kind === "new-request" && <NewRequestDialog ctx={ctx} employeeId={dlg.employeeId} onClose={close} />}
+      {dlg?.kind === "from-form" && <FromFormDialog key={dlg.upload.token} ctx={ctx} upload={dlg.upload} onClose={close} />}
       {dlg?.kind === "review" && <ReviewDialog key={dlg.id} ctx={ctx} id={dlg.id} onClose={close} />}
       {dlg?.kind === "advance" && <AdvanceDialog key={dlg.id} ctx={ctx} id={dlg.id} onClose={close} />}
     </div>
@@ -307,7 +306,6 @@ function Dashboard({ ctx }: { ctx: Ctx }) {
   const pending = db.requests.filter((r) => r.status === "pending");
   const active = db.requests.filter(isActive);
   const total = outstanding(db);
-  const size = db.settings.facilitySize;
   const due = active
     .map((r) => ({ r, amount: dueFor(r, month), done: deductedIn(r, month) }))
     .filter((x) => x.amount > 0 || x.done);
@@ -316,17 +314,10 @@ function Dashboard({ ctx }: { ctx: Ctx }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat icon={CalendarClock} label="Pending requests" value={String(pending.length)} sub="awaiting a decision" />
         <Stat icon={HandCoins} label="Active advances" value={String(active.length)} sub={overdue ? `${overdue} overdue` : "none overdue"} tone={overdue ? "warn" : undefined} />
         <Stat icon={Wallet} label="Total outstanding" value={money(total)} />
-        <Stat
-          icon={Landmark}
-          label="Remaining facility"
-          value={size ? money(r2(size - total)) : "Not set"}
-          sub={size ? `of ${money(size)}` : "Set the size in Settings"}
-          tone={size && size - total < 0 ? "warn" : undefined}
-        />
         <Stat icon={Users} label={`Due in ${monthLabel(month)}`} value={money(dueTotal)} sub={`${due.filter((x) => !x.done).length} to deduct`} />
       </div>
 
@@ -370,8 +361,9 @@ function Dashboard({ ctx }: { ctx: Ctx }) {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Pending requests</CardTitle>
+            <UploadButton ctx={ctx} size="sm" />
           </CardHeader>
           <CardContent>
             <Table head={["Name", "Amount", "Policy", ""]} empty="No pending requests.">
@@ -442,15 +434,16 @@ function Requests({ ctx }: { ctx: Ctx }) {
             <option value="repaid">Repaid</option>
             <option value="rejected">Rejected</option>
           </select>
-          <Button onClick={() => ctx.open({ kind: "new-request" })} disabled={!db.employees.length}>
-            <Plus /> New request
+          <UploadButton ctx={ctx} />
+          <Button variant="outline" onClick={() => ctx.open({ kind: "new-request" })} disabled={!db.employees.length}>
+            <Plus /> Type in a request
           </Button>
         </div>
       </CardHeader>
       <CardContent>
         <Table
           head={["Requested", "Staff no", "Name", "Amount", "Approved", "Months", "Purpose", "Status", ""]}
-          empty={db.employees.length ? "No requests." : "Add employees first, then record their requests."}
+          empty="No requests yet. Upload an employee's loan application form to start."
         >
           {rows.map((r) => {
             const e = ctx.emp(r.employeeId);
@@ -476,6 +469,7 @@ function Requests({ ctx }: { ctx: Ctx }) {
                       Open
                     </Button>
                   )}
+                  {r.sourceFile && <OriginalLink id={r.id} icon />}
                   <PrintLink id={r.id} />
                 </td>
               </tr>
@@ -665,9 +659,12 @@ function ReviewDialog({ ctx, id, onClose }: { ctx: Ctx; id: string; onClose: () 
         </Field>
         <ErrorText msg={err} />
         <DialogFooter className="sm:justify-between">
-          <Button variant="ghost" render={<a href={`/print/${r.id}`} target="_blank" rel="noopener" />} nativeButton={false}>
-            <Printer /> Print form
-          </Button>
+          <div className="flex gap-1">
+            {r.sourceFile && <OriginalLink id={r.id} />}
+            <Button variant="ghost" render={<a href={`/print/${r.id}`} target="_blank" rel="noopener" />} nativeButton={false}>
+              <Printer /> Print form
+            </Button>
+          </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button variant="destructive" onClick={() => act("reject")}>
               Reject
@@ -790,6 +787,7 @@ function AdvanceDialog({ ctx, id, onClose }: { ctx: Ctx; id: string; onClose: ()
         )}
         <ErrorText msg={err} />
         <DialogFooter>
+          {r.sourceFile && <OriginalLink id={r.id} />}
           <Button variant="outline" render={<a href={`/print/${r.id}`} target="_blank" rel="noopener" />} nativeButton={false}>
             <Printer /> Print form
           </Button>
@@ -945,97 +943,257 @@ function EmployeeDialog({ ctx, emp, onClose }: { ctx: Ctx; emp?: Employee; onClo
   );
 }
 
-// ---------------------------------------------------------------- settings & backup
+// ---------------------------------------------------------------- uploaded application forms
 
-function SettingsTab({ ctx }: { ctx: Ctx }) {
-  const { db, backups } = ctx.state;
-  const [f, setF] = useState({
-    companyName: db.settings.companyName,
-    currency: db.settings.currency,
-    facilitySize: String(db.settings.facilitySize || ""),
-  });
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+const OriginalLink = ({ id, icon }: { id: string; icon?: boolean }) => (
+  <Button
+    variant="ghost"
+    size={icon ? "icon-sm" : "default"}
+    title="Open the uploaded application form"
+    render={<a href={`/api/upload?id=${id}`} target="_blank" rel="noopener" />}
+    nativeButton={false}
+  >
+    <FileText />
+    {!icon && "Original form"}
+  </Button>
+);
 
-  const report = (err: string | null, ok: string) => setMsg(err ? { ok: false, text: err } : { ok: true, text: ok });
-  const save = async () => report(await ctx.run({ type: "saveSettings", settings: f }), "Settings saved.");
-  const restoreBackup = async (name: string) => {
-    if (!confirm(`Restore ${name}? The current data is kept as a pre-restore backup first.`)) return;
-    report(await ctx.run({ type: "restore", backup: name }), `Restored ${name}.`);
-  };
-  const restoreFile = async (file?: File) => {
+function UploadButton({ ctx, size }: { ctx: Ctx; size?: "sm" }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  const read = async (file?: File) => {
     if (!file) return;
+    setBusy(true);
     try {
-      const data = JSON.parse(await file.text());
-      if (!confirm(`Restore from ${file.name}? The current data is kept as a pre-restore backup first.`)) return;
-      report(await ctx.run({ type: "restore", data }), `Restored from ${file.name}.`);
-    } catch {
-      report("That file is not valid JSON.", "");
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch("/api/upload", { method: "POST", body });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      ctx.notify("");
+      ctx.open({ kind: "from-form", upload: { ...(data as ParseResult & { token: string }), fileName: file.name } });
+    } catch (e) {
+      ctx.notify(e instanceof Error ? e.message : String(e));
     } finally {
-      if (fileRef.current) fileRef.current.value = "";
+      setBusy(false);
+      if (ref.current) ref.current.value = "";
     }
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle>Settings</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <Field label="Company name (printed on the form)">
-            <Input value={f.companyName} onChange={(e) => setF({ ...f, companyName: e.target.value })} />
-          </Field>
-          <Field label="Currency label (optional, e.g. KES)">
-            <Input value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value })} />
-          </Field>
-          <Field label="Advance facility size (total that may be lent out)">
-            <Input type="number" min="0" step="0.01" value={f.facilitySize} onChange={(e) => setF({ ...f, facilitySize: e.target.value })} />
-          </Field>
-          <div>
-            <Button onClick={save}>Save settings</Button>
-          </div>
-        </CardContent>
-      </Card>
+    <>
+      <Button size={size} onClick={() => ref.current?.click()} disabled={busy}>
+        <FileUp /> {busy ? "Reading form…" : "Upload application form"}
+      </Button>
+      <input ref={ref} type="file" accept=".pdf,application/pdf" hidden onChange={(e) => read(e.target.files?.[0])} />
+    </>
+  );
+}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Backup & restore</CardTitle>
-          <CardDescription>
-            Records are stored only on this laptop in the <code>data</code> folder. A copy is saved automatically each day. Keep a downloaded backup somewhere safe, such as an encrypted USB drive.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-2">
-            <Button render={<a href="/api/backup" />} nativeButton={false}>
-              <Download /> Download backup
-            </Button>
-            <Button variant="outline" onClick={() => fileRef.current?.click()}>
-              <Upload /> Restore from file…
-            </Button>
-            <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={(e) => restoreFile(e.target.files?.[0])} />
+/** Review what was read from an uploaded form, complete what the form doesn't say, and save as pending. */
+function FromFormDialog({ ctx, upload, onClose }: { ctx: Ctx; upload: Upload; onClose: () => void }) {
+  const { db, today } = ctx.state;
+  const p = upload.fields;
+  const findByStaffNo = (no: string) => db.employees.find((e) => no.trim() && e.staffNo.toLowerCase() === no.trim().toLowerCase());
+  const known = findByStaffNo(p.staffNo);
+
+  const [emp, setEmp] = useState({
+    staffNo: p.staffNo || known?.staffNo || "",
+    surname: p.surname || known?.surname || "",
+    firstNames: p.firstNames || known?.firstNames || "",
+    position: p.position || known?.position || "",
+    tel: p.tel || known?.tel || "",
+    dateOfEmployment: p.dateOfEmployment || known?.dateOfEmployment || "",
+    monthlyGross: p.monthlyGross ? String(p.monthlyGross) : known ? String(known.monthlyGross) : "",
+    probationDone: known?.probationDone ?? false,
+    contractEndDate: known?.contractEndDate ?? "",
+    servingNotice: known?.servingNotice ?? false,
+  });
+  const [req, setReq] = useState({
+    amount: p.amount ? String(p.amount) : "",
+    months: String(p.months ?? 3),
+    purpose: p.purpose as Purpose | "",
+    purposeOther: p.purposeOther,
+    otherLoans: p.otherLoans,
+    requestedOn: p.requestedOn || today,
+  });
+  const [err, setErr] = useState("");
+
+  const empText = (k: "staffNo" | "surname" | "firstNames" | "position" | "tel" | "dateOfEmployment" | "monthlyGross" | "contractEndDate") => ({
+    value: emp[k],
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setEmp({ ...emp, [k]: e.target.value }),
+  });
+  const reqText = (k: "amount" | "purposeOther" | "requestedOn") => ({
+    value: req[k],
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => setReq({ ...req, [k]: e.target.value }),
+  });
+
+  // Policy preview with the employee as they will be saved.
+  const match = findByStaffNo(emp.staffNo);
+  const preview: Employee = {
+    id: match?.id ?? "__new__",
+    staffNo: emp.staffNo,
+    surname: emp.surname,
+    firstNames: emp.firstNames,
+    position: emp.position,
+    tel: emp.tel,
+    dateOfEmployment: emp.dateOfEmployment,
+    monthlyGross: Number(emp.monthlyGross) || 0,
+    probationDone: emp.probationDone,
+    contractEndDate: emp.contractEndDate || null,
+    servingNotice: emp.servingNotice,
+  };
+  const previewDb: Db = { ...db, employees: [...db.employees.filter((e) => e.id !== preview.id), preview] };
+  const amount = Number(req.amount) || 0;
+  const checks = policyChecks(previewDb, { id: "", employeeId: preview.id, months: Number(req.months) }, amount, today);
+  const changed = match
+    ? ([
+        ["surname", "Surname"],
+        ["firstNames", "First names"],
+        ["position", "Position"],
+        ["tel", "Tel"],
+        ["dateOfEmployment", "D.O.E"],
+      ] as const)
+        .filter(([k]) => String(match[k] ?? "") !== emp[k])
+        .map(([, label]): string => label)
+        .concat(match.monthlyGross !== preview.monthlyGross ? ["Monthly gross"] : [])
+    : [];
+
+  const save = async () => {
+    const msg = await ctx.run({ type: "createFromForm", uploadToken: upload.token, employee: emp, request: req });
+    if (msg) setErr(msg);
+    else onClose();
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Loan application form</DialogTitle>
+          <DialogDescription>
+            Read from {upload.fileName}. Check the details, complete what the form doesn&apos;t say, then save it as a pending request.
+          </DialogDescription>
+        </DialogHeader>
+
+        {upload.notes.length > 0 && (
+          <ul className="flex flex-col gap-1 rounded-lg bg-warning/10 p-3 text-sm">
+            {upload.notes.map((n) => (
+              <li key={n} className="flex items-start gap-2">
+                <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+                {n}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">Employee</h3>
+            {match ? (
+              <Badge variant="secondary">
+                Existing employee{changed.length ? ` · will update ${changed.join(", ")}` : ""}
+              </Badge>
+            ) : (
+              <Badge variant="outline">New employee · will be added</Badge>
+            )}
           </div>
-          {msg && <p className={cn("rounded-lg px-3 py-2 text-sm", msg.ok ? "bg-primary/10 text-primary" : "bg-destructive/10 text-destructive")}>{msg.text}</p>}
-          <div>
-            <div className="mb-1 text-xs font-medium text-muted-foreground">Automatic backups on this laptop</div>
-            <div className="max-h-72 overflow-y-auto rounded-lg border">
-              {backups.length ? (
-                backups.map((b) => (
-                  <div key={b} className="flex items-center justify-between border-b px-3 py-1.5 last:border-0">
-                    <span className="font-mono text-xs">{b}</span>
-                    <Button variant="ghost" size="xs" onClick={() => restoreBackup(b)}>
-                      <RotateCcw /> Restore
-                    </Button>
-                  </div>
-                ))
-              ) : (
-                <p className="p-3 text-sm text-muted-foreground">No backups yet. The first one is made today.</p>
-              )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Surname">
+              <Input {...empText("surname")} />
+            </Field>
+            <Field label="First names">
+              <Input {...empText("firstNames")} />
+            </Field>
+            <Field label="Position">
+              <Input {...empText("position")} />
+            </Field>
+            <Field label="Tel">
+              <Input {...empText("tel")} />
+            </Field>
+            <Field label="Date of employment (D.O.E)">
+              <Input type="date" {...empText("dateOfEmployment")} />
+            </Field>
+            <Field label="Staff no">
+              <Input {...empText("staffNo")} />
+            </Field>
+            <Field label="Monthly gross salary">
+              <Input type="number" min="0" step="0.01" {...empText("monthlyGross")} />
+            </Field>
+          </div>
+          <div className="rounded-lg border p-3">
+            <div className="mb-2 text-xs font-medium text-muted-foreground">Not on the form: confirm from HR records</div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Contract end date (blank if permanent)">
+                <Input type="date" {...empText("contractEndDate")} />
+              </Field>
+              <div className="flex flex-col justify-end gap-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" className="size-4 accent-primary" checked={emp.probationDone} onChange={(e) => setEmp({ ...emp, probationDone: e.target.checked })} />
+                  Probation completed
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" className="size-4 accent-primary" checked={emp.servingNotice} onChange={(e) => setEmp({ ...emp, servingNotice: e.target.checked })} />
+                  Serving notice
+                </label>
+              </div>
             </div>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <h3 className="text-sm font-semibold">Request</h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Requested amount">
+              <Input type="number" min="0" step="0.01" {...reqText("amount")} />
+              {preview.monthlyGross > 0 && (
+                <span className="text-xs text-muted-foreground">Maximum {ctx.money(r2(preview.monthlyGross / 3))} (1/3 of gross)</span>
+              )}
+            </Field>
+            <Field label="Repayment (equal monthly salary deductions)">
+              <select className={selectCls} value={req.months} onChange={(e) => setReq({ ...req, months: e.target.value })}>
+                {[1, 2, 3].map((m) => (
+                  <option key={m} value={m}>
+                    {m} month{m > 1 ? "s" : ""}
+                    {amount > 0 ? ` · ${ctx.money(buildSchedule(amount, m, "2000-01")[0].due)} / month` : ""}
+                  </option>
+                ))}
+              </select>
+              {p.instalment && <span className="text-xs text-muted-foreground">Instalment on the form: {ctx.money(p.instalment)}</span>}
+            </Field>
+            <Field label="Date of application (signature date)">
+              <Input type="date" {...reqText("requestedOn")} />
+            </Field>
+            <Field label="Other outstanding loans">
+              <Input placeholder="None" value={req.otherLoans} onChange={(e) => setReq({ ...req, otherLoans: e.target.value })} />
+            </Field>
+            <Field label="Purpose" className="sm:col-span-2">
+              <div className="flex flex-wrap gap-4">
+                {PURPOSES.map((x) => (
+                  <label key={x} className="flex items-center gap-2 text-sm">
+                    <input type="radio" name="form-purpose" className="accent-primary" checked={req.purpose === x} onChange={() => setReq({ ...req, purpose: x })} />
+                    {x}
+                  </label>
+                ))}
+              </div>
+              {req.purpose === "Other" && <Input placeholder="Please specify" {...reqText("purposeOther")} />}
+            </Field>
+          </div>
+        </section>
+
+        <div className="rounded-lg border p-3">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">Policy check preview</div>
+          <ChecksList checks={checks} />
+        </div>
+        <ErrorText msg={err} />
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save}>Save as pending</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

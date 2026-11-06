@@ -27,7 +27,8 @@ function findRequest(db: Db, id: unknown): AdvanceRequest {
   return r;
 }
 
-export function apply(db: Db, b: Body) {
+/** Applies one change to `db`. Returns the id of a request it created, if any. */
+export function apply(db: Db, b: Body): string | void {
   const today = ymd();
   switch (b.type) {
     case "saveSettings": {
@@ -91,7 +92,21 @@ export function apply(db: Db, b: Body) {
       need(PURPOSES.includes(purpose), "Choose a purpose");
       need(purpose !== "Other" || r.purposeOther, "Describe the purpose for 'Other'");
       db.requests.push(r);
-      return;
+      return r.id;
+    }
+
+    case "createFromForm": {
+      // From an uploaded application form: add the employee (or update them, matched by staff no)
+      // and save the request as pending. Nothing is saved unless every part is valid.
+      const x = (b.employee ?? {}) as Body;
+      const staffNo = str(x.staffNo);
+      need(staffNo, "Staff number is required");
+      const byStaffNo = (e: Employee) => e.staffNo.toLowerCase() === staffNo.toLowerCase();
+      apply(db, { type: "saveEmployee", employee: { ...x, id: db.employees.find(byStaffNo)?.id ?? "" } });
+      const emp = db.employees.find(byStaffNo);
+      need(emp, "Employee could not be saved");
+      const id = apply(db, { ...((b.request ?? {}) as Body), type: "createRequest", employeeId: emp!.id });
+      return id;
     }
 
     case "approve": {
